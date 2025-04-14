@@ -1,0 +1,50 @@
+#!/bin/bash
+# Molecular Dynamics Simulation of 1XTG using GROMACS with AMBER99SB-ILDN force field
+# Description: This script sets up and runs a 50 ns MD simulation on a protein using GROMACS.
+
+# STEP 1: Generate topology and coordinate files from input PDB
+gmx pdb2gmx -f 1xtg.pdb -o 1AKI_processed.gro -water spce    # Choose "6" for amber99sb-ildn
+
+# STEP 2: Define the simulation box (cubic box with 1.0 nm distance to box edge)
+gmx editconf -f 1AKI_processed.gro -o 1AKI_newbox.gro -c -d 1.0 -bt cubic
+
+# STEP 3: Solvate the protein in the defined box using SPC water model
+gmx solvate -cp 1AKI_newbox.gro -cs spc216.gro -o 1AKI_solv.gro -p topol.top
+
+# STEP 4: Prepare for ion addition (generate input binary for ion placement)
+gmx grompp -f ions.mdp -c 1AKI_solv.gro -p topol.top -o ions.tpr
+
+# STEP 5: Replace solvent with ions to neutralize the system
+gmx genion -s ions.tpr -o 1AKI_solv_ions.gro -p topol.top -pname NA -nname CL -neutral
+
+# STEP 6: Energy Minimization
+gmx grompp -f minim.mdp -c 1AKI_solv_ions.gro -p topol.top -o em.tpr
+gmx mdrun -v -deffnm em
+
+# STEP 7: Extract potential energy to verify minimization
+gmx energy -f em.edr -o potential.xvg
+
+# STEP 8: NVT Equilibration (constant volume, constant temperature)
+gmx grompp -f nvt.mdp -c em.gro -r em.gro -p topol.top -o nvt.tpr
+gmx mdrun -deffnm nvt
+
+# STEP 9: Extract temperature profile
+gmx energy -f nvt.edr -o temperature.xvg
+
+# STEP 10: NPT Equilibration (constant pressure, constant temperature)
+gmx grompp -f npt.mdp -c nvt.gro -r nvt.gro -t nvt.cpt -p topol.top -o npt.tpr
+gmx mdrun -deffnm npt
+
+# STEP 11: Extract pressure and density
+gmx energy -f npt.edr -o pressure.xvg      # Choose "18 0" when prompted
+gmx energy -f npt.edr -o density.xvg       # Choose "24 0" when prompted
+
+# STEP 12: Production MD run (50 ns)
+gmx grompp -f md.mdp -c npt.gro -t npt.cpt -p topol.top -o md_0_1.tpr
+gmx mdrun -deffnm md_0_1
+
+# STEP 13: Remove PBC and recenter trajectory for analysis
+gmx trjconv -s md_0_1.tpr -f md_0_1.xtc -o md_0_1_noPBC.xtc -pbc mol -center
+
+# STEP 14: Calculate radius of gyration (Rg)
+gmx gyrate -s md_0_1.tpr -f md_0_1_noPBC.xtc -o gyrate.xvg
